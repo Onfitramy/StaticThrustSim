@@ -47,6 +47,34 @@ def motionEQ(t, y, FT, µ, 𝛼, c): #y = [r, φ, pr, ρφ, m]
 
     return [r_der, φ_der, pr_der, ρφ_der, m_der]
 
+def updateIVP(FT, c, simlen):
+    #Calculates the Flightpath. Terminates at 0 fuel or after simlen
+    sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c), t_eval= np.linspace(0, simlen, simlen), events=Event_FuelEmpty)
+
+    xSol = sol.y[0] * np.cos(sol.y[1])
+    ySol = sol.y[0] * np.sin(sol.y[1])
+
+    FuelDepleted = 0
+
+    P_FinalOrbit = calcOrbitalElements(sol.y[0][-1], sol.y[2][-1], sol.y[3][-1])[1]
+
+    #Calculate the final orbit
+    if sol.t_events[0].size > 0:
+        FuelDepleted = sol.t_events[0][0]
+        #solBal = scipy.integrate.solve_ivp(motionEQ, [int(sol.t[-1]), simlen], [sol.y[0][-1], sol.y[1][-1], sol.y[2][-1], sol.y[3][-1], sol.y[4][-1]], args=(0, µ, 𝛼, c), t_eval= np.linspace(int(sol.t[-1]), simlen, (simlen-int(sol.t[-1]))))
+        solBal = scipy.integrate.solve_ivp(motionEQ, [0, int(P_FinalOrbit)], [sol.y[0][-1], sol.y[1][-1], sol.y[2][-1], sol.y[3][-1], sol.y[4][-1]], args=(0, µ, 𝛼, c), t_eval= np.linspace(0, int(P_FinalOrbit), int(P_FinalOrbit)))
+        xSol = np.append(xSol, solBal.y[0] * np.cos(solBal.y[1]))
+        ySol = np.append(ySol, solBal.y[0] * np.sin(solBal.y[1]))
+
+
+    return sol, xSol, ySol, FuelDepleted
+
+def calcOrbitalElements(r, pr, pφ):
+    A_FinalOrbit = 1/((2/r) - (pr**2 + (r * pφ)**2)/µ)
+    P_FinalOrbit = 2 * np.pi * np.sqrt((A_FinalOrbit**3)/µ)
+
+    return A_FinalOrbit, P_FinalOrbit
+
 #Beginning of App code
 app = Dash()
 
@@ -70,13 +98,6 @@ app.layout = [
             id='Exhaust-setting',
             updatemode='drag',),
 
-    html.Label('Simulation lenght'),
-    dcc.Slider(
-            min=3600,   #1 hour
-            max=3600*24*7,  #1 week
-            value=4300,
-            id='Simlen-setting',
-            updatemode='drag',),
     dcc.Graph(id='graph-content')
 ]
 
@@ -84,12 +105,13 @@ app.layout = [
     Output('graph-content', 'figure'),
     Input('Thrust-setting', 'value'),
     Input('Exhaust-setting', 'value'),
-    Input('Simlen-setting', 'value')
 )
 
-def update_graph(FT,c,simlen):
+def update_graph(FT,c):
 
-    xSol, ySol, FuelDepletedTime = updateIVP(float(FT),float(c),simlen)
+    maxSimlen = 3600 * 24 *14 #Maximum 14 Tage
+
+    sol, xSol, ySol, FuelDepletedTime = updateIVP(float(FT),float(c),maxSimlen)
 
     fig = go.Figure()
     fig.add_trace(go.Line(x=xSol[:int(FuelDepletedTime)], y=ySol[:int(FuelDepletedTime)], name='Spacecraft Trajectory'))
@@ -103,13 +125,34 @@ def update_graph(FT,c,simlen):
             marker=dict(size=12, color='red', symbol='star'),
             name='No Fuel'
             ))
+        
+        #Final orbit
+        radius =  np.sqrt(xSol[int(FuelDepletedTime):]**2 + ySol[int(FuelDepletedTime):]**2)
+
         fig.add_trace(go.Line(
             x=xSol[int(FuelDepletedTime):], 
             y=ySol[int(FuelDepletedTime):], 
             mode='lines', 
             marker=dict(color='red'),
-            name = "Ending Orbit" 
+            name = "Ending Orbit",
+            hovertemplate=(
+                "<b>X:</b> %{x}<br>"
+                "<b>Y:</b> %{y:.2f}<br>"
+                "<b>Radius:</b> %{customdata:.2f}<extra></extra>"),
+            customdata=radius
             ))
+        
+        #Anotate with final orbit infomation
+        fig.add_annotation(
+            x=xSol[int(FuelDepletedTime)-1],  
+            y=ySol[int(FuelDepletedTime)-1],  
+            text=f"Orbital Period: {calcOrbitalElements(sol.y[0][int(FuelDepletedTime)], sol.y[2][int(FuelDepletedTime)], sol.y[3][int(FuelDepletedTime)])[0]/(3600):.3f}h", 
+            showarrow=True,  
+            arrowhead=2,  
+            ax=50,  # X-offset for the arrow
+            ay=-50,  # Y-offset for the arrow
+            font=dict(color="black", size=12)
+        )
     
     fig.add_shape(type="circle",
         xref="x", yref="y",
@@ -125,25 +168,6 @@ def update_graph(FT,c,simlen):
     )
     
     return fig
-
-def updateIVP(FT, c, simlen):
-    #Calculates the Flightpath. Terminates at 0 fuel or after simlen
-    sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c), t_eval= np.linspace(0, simlen, simlen), events=Event_FuelEmpty)
-
-    xSol = sol.y[0] * np.cos(sol.y[1])
-    ySol = sol.y[0] * np.sin(sol.y[1])
-
-    FuelDepleted = sol.t[-1]
-
-    #Calculate ballistic flightpath with 0 fuel
-    if sol.t_events[0].size > 0:
-        FuelDepleted = sol.t_events[0][0]
-        solBal = scipy.integrate.solve_ivp(motionEQ, [int(sol.t[-1]), simlen], [sol.y[0][-1], sol.y[1][-1], sol.y[2][-1], sol.y[3][-1], sol.y[4][-1]], args=(0, µ, 𝛼, c), t_eval= np.linspace(int(sol.t[-1]), simlen, (simlen-int(sol.t[-1]))))
-        xSol = np.append(xSol, solBal.y[0] * np.cos(solBal.y[1]))
-        ySol = np.append(ySol, solBal.y[0] * np.sin(solBal.y[1]))
-
-
-    return xSol, ySol, FuelDepleted
 
 if __name__ == '__main__':
     app.run(debug=True)
