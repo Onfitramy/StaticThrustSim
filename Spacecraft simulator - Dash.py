@@ -1,26 +1,41 @@
+#This is a simple spacecraft simulator solution developed for a homework task
+#Credit goes to Prof. Dr. B. Dachwald for the main calculations and the task
+
 import numpy as np
 import scipy.integrate
 
 from dash import Dash, html, dcc, callback, Output, Input
 import plotly.express as px
+import plotly.graph_objects as go
 import pandas as pd
 
 simlen = 2000  #Simulation lenght in h
 
-𝛼 = 90   #control variable in °
-FT = 10  #Thrust in N
-c = 20000 #exhaust velocity in m/s
+#Basic values taken from BepiColombo
 
-r0 = 300   #Initial orbit height in km
+𝛼 = 90   #control variable in °
+#FT = 10  #Thrust in N
+#c = 2 #exhaust velocity in km/s
+
+rE = 6378   #Earth radius in km
+a0 = 300    #Initial orbit altitude
+r0 = a0+rE   #Initial orbit radius in km
 v0 = 0   #Initial orbital velocity in km/s (set zero to use Eccentricity)
-E = 0    #Eccentricity
-m0 = 1000   #Initial mass in kg
+E = 0.2    #Eccentricity
+mD = 2700   #Drymass in kg
+mF0 = 1400  #Initial Fuelmass
+m0 = mD + mF0
 µ = 3.986e5 #Gtravitational parameter in km3/s2
 
 if v0 == 0:
     v0 = np.sqrt(µ/r0) #For a circular orbit
     ai = r0/(1-E) #Semi-major axis
     v0 = (2*µ/r0 - µ/ai)**0.5
+
+def Event_FuelEmpty(t, y, FT, µ, 𝛼, c): #Check if Fuel is empty, used in solve_IVP as  breakpoint when = 0
+    r, φ, pr, ρφ, m = y
+    return m - mD
+Event_FuelEmpty.terminal = True
 
 def motionEQ(t, y, FT, µ, 𝛼, c): #y = [r, φ, pr, ρφ, m]
     r, φ, pr, ρφ, m = y
@@ -32,11 +47,6 @@ def motionEQ(t, y, FT, µ, 𝛼, c): #y = [r, φ, pr, ρφ, m]
 
     return [r_der, φ_der, pr_der, ρφ_der, m_der]
 
-sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c), t_eval= np.linspace(0, simlen, simlen*5))
-
-xSol = sol.y[0] * np.cos(sol.y[1])
-ySol = sol.y[0] * np.sin(sol.y[1])
-
 #Beginning of App code
 app = Dash()
 
@@ -46,26 +56,25 @@ app.layout = [
     html.Label('Thrust[N]'),
     dcc.Slider(
             min=0,
-            max=10,
+            max=4,
             marks={i: str(i) for i in range(1, 9)},
-            value=2,
+            value=0.29,
             id='Thrust-setting',
             updatemode='drag',),
     
-    html.Label('Exhaust Velocity[m/s]'),
+    html.Label('Exhaust Velocity[km/s]'),
     dcc.Slider(
-            min=100,
-            max=100000,
-            value=20000,
+            min=0.1,
+            max=10,
+            value=4.3,
             id='Exhaust-setting',
             updatemode='drag',),
 
     html.Label('Simulation lenght'),
     dcc.Slider(
-            min=100,
-            max=10000,
-            marks={i: str(i) for i in range(1, 9)},
-            value=2000,
+            min=3600,   #1 hour
+            max=3600*24*7,  #1 week
+            value=4300,
             id='Simlen-setting',
             updatemode='drag',),
     dcc.Graph(id='graph-content')
@@ -80,25 +89,61 @@ app.layout = [
 
 def update_graph(FT,c,simlen):
 
-    xSol, ySol = updateIVP(float(FT),float(c),simlen)
+    xSol, ySol, FuelDepletedTime = updateIVP(float(FT),float(c),simlen)
 
-    fig = px.line(x=xSol, y=ySol, title='Spacecraft Trajectory')
+    fig = go.Figure()
+    fig.add_trace(go.Line(x=xSol[:int(FuelDepletedTime)], y=ySol[:int(FuelDepletedTime)], name='Spacecraft Trajectory'))
+
+    if FuelDepletedTime  != 0:
+        #Marker point at which fuel runs out
+        fig.add_trace(go.Scatter(
+            x=[xSol[int(FuelDepletedTime)-1]],  # X-coordinate of Fuel cutoff point
+            y=[ySol[int(FuelDepletedTime)-1]], 
+            mode='markers',
+            marker=dict(size=12, color='red', symbol='star'),
+            name='No Fuel'
+            ))
+        fig.add_trace(go.Line(
+            x=xSol[int(FuelDepletedTime):], 
+            y=ySol[int(FuelDepletedTime):], 
+            mode='lines', 
+            marker=dict(color='red'),
+            name = "Ending Orbit" 
+            ))
+    
+    fig.add_shape(type="circle",
+        xref="x", yref="y",
+        x0=-rE, y0=-rE, x1=rE, y1=rE,
+        fillcolor="PaleTurquoise",
+        line_color="LightSeaGreen",
+    )
 
     fig.update_layout(
         xaxis=dict(scaleanchor="y"),  # Link the scale of x-axis to y-axis
         yaxis=dict(),
-        height=1000
+        height=1000,
     )
     
     return fig
 
 def updateIVP(FT, c, simlen):
-    sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c), t_eval= np.linspace(0, simlen, simlen*5))
+    #Calculates the Flightpath. Terminates at 0 fuel or after simlen
+    sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c), t_eval= np.linspace(0, simlen, simlen), events=Event_FuelEmpty)
 
     xSol = sol.y[0] * np.cos(sol.y[1])
     ySol = sol.y[0] * np.sin(sol.y[1])
 
-    return xSol, ySol
+    FuelDepleted = sol.t[-1]
+
+    #Calculate ballistic flightpath with 0 fuel
+    if sol.t_events[0].size > 0:
+        FuelDepleted = sol.t_events[0][0]
+        solBal = scipy.integrate.solve_ivp(motionEQ, [int(sol.t[-1]), simlen], [sol.y[0][-1], sol.y[1][-1], sol.y[2][-1], sol.y[3][-1], sol.y[4][-1]], args=(0, µ, 𝛼, c), t_eval= np.linspace(int(sol.t[-1]), simlen, (simlen-int(sol.t[-1]))))
+        xSol = np.append(xSol, solBal.y[0] * np.cos(solBal.y[1]))
+        ySol = np.append(ySol, solBal.y[0] * np.sin(solBal.y[1]))
+
+
+    return xSol, ySol, FuelDepleted
 
 if __name__ == '__main__':
     app.run(debug=True)
