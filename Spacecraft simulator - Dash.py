@@ -94,7 +94,7 @@ app.layout = [
             min=0,
             max=0.1,
             marks={i: str(i) for i in range(1, 9)},
-            value=0.029,
+            value=0.01,             #!!Startwerte!!
             id='Thrust-setting',
             updatemode='drag',),
     
@@ -102,7 +102,7 @@ app.layout = [
     dcc.Slider(
             min=1,
             max=100,
-            value=42.168,
+            value=42.168,           #!!Startwerte!!
             id='Exhaust-setting',
             updatemode='drag',),
     
@@ -110,7 +110,7 @@ app.layout = [
     dcc.Slider(
             min=100,
             max=10000,
-            value=2700,
+            value=2700,             #!!Startwerte!!
             id='DryMass-setting',
             updatemode='drag',),
     
@@ -118,7 +118,7 @@ app.layout = [
     dcc.Slider(
             min=100,
             max=10000,
-            value=1400,
+            value=700,              #!!Startwerte!!
             id='FuelMass-setting',
             updatemode='drag',),
 
@@ -168,7 +168,7 @@ def update_graph(FT,c, DryMass, FuelMass, check):
             y=[ySol[int(FuelDepletedTime)-1]], 
             mode='markers',
             marker=dict(size=12, color='red', symbol='star'),
-            name='No Fuel'
+            name='No Fuel/MaxTime'
             ))
         
         #Final orbit
