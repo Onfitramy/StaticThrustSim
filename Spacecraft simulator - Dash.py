@@ -4,12 +4,13 @@
 import numpy as np
 import scipy.integrate
 
-from dash import Dash, html, dcc, callback, Output, Input
+from dash import Dash, html, dcc, callback, Output, Input, State
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
 
 simlen = 2000  #Simulation lenght in h
+maxSimTime = 2 #Maximum realtime for a single simulation in s
 
 #Basic values taken from BepiColombo
 
@@ -18,18 +19,12 @@ simlen = 2000  #Simulation lenght in h
 #c = 2 #exhaust velocity in km/s
 
 rE = 6378   #Earth radius in km
-a0 = 300    #Initial orbit altitude
-r0 = a0+rE   #Initial orbit radius in km
+#a0 = 300    #Initial orbit altitude
 v0 = 0   #Initial orbital velocity in km/s (set zero to use Eccentricity)
 E = 0    #Eccentricity
 mD = 2700   #Drymass in kg
 mF0 = 1400  #Initial Fuelmass
 µ = 3.986e5 #Gtravitational parameter in km3/s2
-
-if v0 == 0:
-    v0 = np.sqrt(µ/r0) #For a circular orbit
-    ai = r0/(1-E) #Semi-major axis
-    v0 = (2*µ/r0 - µ/ai)**0.5
 
 def Event_FuelEmpty(t, y, FT, µ, 𝛼, c, mD): #Check if Fuel is empty, used in solve_IVP as  breakpoint when = 0
     r, φ, pr, ρφ, m = y
@@ -47,12 +42,16 @@ def motionEQ(t, y, FT, µ, 𝛼, c, mD): #y = [r, φ, pr, ρφ, m]
 
     return [r_der, φ_der, pr_der, ρφ_der, m_der]
 
-def updateIVP(FT, c, simlen, DryMass, FuelMass):
+def updateIVP(FT, c, simlen, DryMass, FuelMass, resolution, iAltitude, iEccentricity):
 
     m0 = DryMass + FuelMass
 
+    r0 = iAltitude+rE #Initial orbit radius in km
+    ai = r0/(1-iEccentricity) #Semi-major axis
+    v0 = (2*µ/r0 - µ/ai)**0.5 #Initial velocity
+
     #Calculates the Flightpath. Terminates at 0 fuel or after simlen
-    sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c, DryMass), t_eval= np.linspace(0, simlen, simlen), events=Event_FuelEmpty)
+    sol = scipy.integrate.solve_ivp(motionEQ, [0, simlen], [r0, 0, 0, v0/r0, m0], args=(FT, µ, 𝛼, c, DryMass), t_eval= np.linspace(0, simlen, int(simlen*resolution)), events=Event_FuelEmpty)
 
     #Convert to 
     xSol = sol.y[0] * np.cos(sol.y[1])
@@ -65,7 +64,7 @@ def updateIVP(FT, c, simlen, DryMass, FuelMass):
     #Calculate the final orbit
     if sol.t_events[0].size > 0:
         FuelDepleted = sol.t_events[0][0]
-        solBal = scipy.integrate.solve_ivp(motionEQ, [0, int(P_FinalOrbit)], [sol.y[0][-1], sol.y[1][-1], sol.y[2][-1], sol.y[3][-1], sol.y[4][-1]], args=(0, µ, 𝛼, c, DryMass), t_eval= np.linspace(0, int(P_FinalOrbit), int(P_FinalOrbit)))
+        solBal = scipy.integrate.solve_ivp(motionEQ, [0, int(P_FinalOrbit)], [sol.y[0][-1], sol.y[1][-1], sol.y[2][-1], sol.y[3][-1], sol.y[4][-1]], args=(0, µ, 𝛼, c, DryMass), t_eval= np.linspace(0, int(P_FinalOrbit), int(P_FinalOrbit*resolution)))
         xSol = np.append(xSol, solBal.y[0] * np.cos(solBal.y[1]))
         ySol = np.append(ySol, solBal.y[0] * np.sin(solBal.y[1]))
     else:
@@ -90,46 +89,79 @@ app.layout = [
     html.H1(children='Spacecraft simulator', style={'textAlign':'center'}),
     html.Br(),
     html.Label('Thrust[N]'),
-    dcc.Slider(
-            min=0,
-            max=0.1,
-            marks={i: str(i) for i in range(1, 9)},
+    dcc.Input(
             value=0.01,             #!!Startwerte!!
             id='Thrust-setting',
-            updatemode='drag',),
+            type="number",
+            required=True,
+            step=0.001,),
     
     html.Label('Exhaust Velocity[km/s]'),
-    dcc.Slider(
-            min=1,
-            max=100,
+    dcc.Input(
             value=42.168,           #!!Startwerte!!
             id='Exhaust-setting',
-            updatemode='drag',),
+            type="number",
+            required=True,
+            step=0.001,),
     
     html.Label('Dry Mass[kg]'),
-    dcc.Slider(
-            min=100,
-            max=10000,
-            value=2700,             #!!Startwerte!!
+    dcc.Input(
+            value=4000,             #!!Startwerte!!
             id='DryMass-setting',
-            updatemode='drag',),
+            type="number",
+            required=True,
+            step=1,),
     
     html.Label('Fuel Mass[kg]'),
-    dcc.Slider(
-            min=100,
-            max=10000,
+    dcc.Input(
             value=700,              #!!Startwerte!!
             id='FuelMass-setting',
-            updatemode='drag',),
+            type="number",
+            required=True,
+            step=1,),
+    
+    html.Label('Initial Orbit height[km]'),
+    dcc.Input(
+            value=300,              #!!Startwerte!!
+            id='iAltitude',
+            type="number",
+            required=True,
+            step=1,),
+    
+    html.Label('Initial Orbit Eccentricity'),
+    dcc.Input(
+            value=0,              #!!Startwerte!!
+            id='iEccentricity',
+            type="number",
+            required=True,
+            min = 0,
+            max = 0.999,),
 
     html.Div(id='dV_readout', style={'whiteSpace': 'pre-line'}),
 
     dcc.Checklist(
-    ['Thrust in Velocity Vector'],
-    ['Thrust in Velocity Vector'],
+    ['Thrust in Velocity Vector','Adaptive Resolution'],
+    ['Adaptive Resolution'],
     inline=True,
     id="Checklist"
     ),
+
+    html.Div([
+        html.Label('Resolution[%]', id="SimResText"), #Resolution of the path to speedup calc time
+
+        dcc.Input(
+                value=10,              #!!Startwerte!!
+                id='SimRes',
+                type="number",
+                min=0.1,
+                max=100,
+                required=True,
+                step=0.1,),
+
+    ], style= {'display': 'block'} # <-- This is the line that will be changed by the dropdown callback
+    ),
+
+    html.Button('Compute', id='compute', n_clicks=0),
 
     dcc.Graph(id='graph-content') 
 ]
@@ -137,28 +169,39 @@ app.layout = [
 @callback(
     Output('graph-content', 'figure'),
     Output('dV_readout', 'children'),
-    Input('Thrust-setting', 'value'),
-    Input('Exhaust-setting', 'value'),
-    Input('DryMass-setting', 'value'),
-    Input('FuelMass-setting', 'value'),
-    Input('Checklist', 'value'),
+    Input('compute', 'n_clicks'),
+    State('Thrust-setting', 'value'),
+    State('Exhaust-setting', 'value'),
+    State('DryMass-setting', 'value'),
+    State('FuelMass-setting', 'value'),
+    State('Checklist', 'value'),
+    State('SimRes', 'value'),
+    State('iAltitude', 'value'),
+    State('iEccentricity', 'value'),
+
+    prevent_initial_call=False,
+    running=[(Output("compute", "disabled"), True, False)]
 )
 
-def update_graph(FT,c, DryMass, FuelMass, check):
+def update_graph(n_clicks, FT,c, DryMass, FuelMass, check, resolution, iAltitude, iEccentricity):
 
-    maxSimlen = 3600 * 24 *31 #Maximum 1 monat
+    maxSimlen = 3600 * 24 * 31 * 6 #Maximum 6 monat
 
-    sol, xSol, ySol, FuelDepletedTime = updateIVP(float(FT),float(c),maxSimlen, DryMass, FuelMass)
+    resolution = resolution/100    #Resolution of the path to speedup calc time
 
-    main_radiusTime =  np.stack((np.sqrt(xSol[:int(FuelDepletedTime)]**2 + ySol[:int(FuelDepletedTime)]**2), sol.t), axis=-1)
+    sol, xSol, ySol, FuelDepletedTime = updateIVP(float(FT),float(c),maxSimlen, DryMass, FuelMass, resolution, iAltitude, iEccentricity)
+
+    FuelDepletedTime=int(FuelDepletedTime*resolution)
+
+    main_radiusTime =  np.stack((np.sqrt(xSol[:int(FuelDepletedTime)]**2 + ySol[:int(FuelDepletedTime)]**2), sol.t[:FuelDepletedTime]/3600), axis=-1)
 
     fig = go.Figure()
     fig.add_trace(go.Line(x=xSol[:int(FuelDepletedTime)], y=ySol[:int(FuelDepletedTime)], name='Spacecraft Trajectory',
         hovertemplate=(
                 "<b>X:</b> %{x}<br>"
                 "<b>Y:</b> %{y:.2f}<br>"
-                "<b>Radius:</b> %{customdata[0]:.2f}<br>"
-                "<b>Time:</b> %{customdata[1]:.2f}<extra></extra>"),
+                "<b>Radius:</b> %{customdata[0]:.2f} m<br>"
+                "<b>Time:</b> %{customdata[1]:.2f} h<extra></extra>"),
          customdata = main_radiusTime))
 
     if FuelDepletedTime  != 0:
@@ -188,16 +231,17 @@ def update_graph(FT,c, DryMass, FuelMass, check):
             ))
         
         #Anotate with final orbit infomation
-        fig.add_annotation(
-            x=xSol[int(FuelDepletedTime)-1],  
-            y=ySol[int(FuelDepletedTime)-1],  
-            text=f"Orbital Period: {calcOrbitalElements(sol.y[0][int(FuelDepletedTime)-1], sol.y[2][int(FuelDepletedTime)-1], sol.y[3][int(FuelDepletedTime)-1])[0]/(3600):.3f}h", 
-            showarrow=True,  
-            arrowhead=2,  
-            ax=50,  # X-offset for the arrow
-            ay=-50,  # Y-offset for the arrow
-            font=dict(color="black", size=12)
-        )
+        if calcOrbitalElements(sol.y[0][int(FuelDepletedTime)-1], sol.y[2][int(FuelDepletedTime)-1], sol.y[3][int(FuelDepletedTime)-1])[0]/(3600)>0:
+            fig.add_annotation(
+                x=xSol[int(FuelDepletedTime)-1],  
+                y=ySol[int(FuelDepletedTime)-1],  
+                text=f"Orbital Period: {calcOrbitalElements(sol.y[0][int(FuelDepletedTime)-1], sol.y[2][int(FuelDepletedTime)-1], sol.y[3][int(FuelDepletedTime)-1])[0]/(3600):.3f}h", 
+                showarrow=True,  
+                arrowhead=2,  
+                ax=50,  # X-offset for the arrow
+                ay=-50,  # Y-offset for the arrow
+                font=dict(color="black", size=12)
+            )
     
     fig.add_shape(type="circle",
         xref="x", yref="y",
@@ -213,6 +257,20 @@ def update_graph(FT,c, DryMass, FuelMass, check):
     )
     
     return fig, f"The craft has a dV of {(-c * np.log(DryMass/(DryMass+FuelMass))):.2f} km/s"
+
+@callback(
+    Output('SimRes', component_property='style'),
+    Output('SimResText', component_property='style'),
+    Input('Checklist', 'value'),
+
+    prevent_initial_call=False,
+    running=[(Output("compute", "disabled"), True, False)]
+)
+def showHideRes(check):
+    if "Adaptive Resolution" in check:
+        return [{'display': 'none'},{'display': 'none'}]
+    else:
+        return [{'display': 'block'},{'display': 'block'}]
 
 if __name__ == '__main__':
     app.run(debug=True)
